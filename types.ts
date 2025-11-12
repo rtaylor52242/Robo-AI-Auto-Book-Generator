@@ -9,6 +9,8 @@ export type BookType = 'fiction' | 'non-fiction';
 export interface BookHistoryEntry {
     id: string;
     title: string;
+    subtitle?: string;
+    author?: string;
     assembledContent: string;
     timestamp: number;
     frontCoverImage?: string;
