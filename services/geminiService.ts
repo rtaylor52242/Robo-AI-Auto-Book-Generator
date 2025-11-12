@@ -1,0 +1,135 @@
+import { GoogleGenAI, Type, Modality } from "@google/genai";
+import type { Chapter, BookType } from "../types";
+
+const API_KEY = process.env.API_KEY;
+
+if (!API_KEY) {
+  throw new Error("API_KEY environment variable not set");
+}
+
+const ai = new GoogleGenAI({ apiKey: API_KEY });
+
+export const generateTableOfContents = async (topic: string, numChapters: number, bookType: BookType): Promise<string[]> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `You are an expert author's assistant. Generate a table of contents for a ${bookType} book about "${topic}". The book should have exactly ${numChapters} chapters. Return the result as a JSON array of strings, where each string is a compelling chapter title. For example: ["Chapter 1: The Awakening", "Chapter 2: A Shadow Falls"]. Do not include markdown formatting or chapter numbers in the titles.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.STRING,
+          },
+        },
+      },
+    });
+
+    const jsonText = response.text.trim();
+    const result = JSON.parse(jsonText);
+    
+    if (Array.isArray(result) && result.every(item => typeof item === 'string')) {
+        return result;
+    } else {
+        throw new Error("Invalid format for table of contents.");
+    }
+
+  } catch (error) {
+    console.error("Error generating table of contents:", error);
+    throw new Error("Failed to generate table of contents. Please try a different topic.");
+  }
+};
+
+export const generateChapterContent = async (topic: string, chapterTitle: string, wordCount: number, bookType: BookType, previousChapterContent?: string): Promise<string> => {
+  try {
+    const styleInstruction = bookType === 'fiction' 
+        ? "Your writing style should be narrative, creative, and engaging. Focus on storytelling, character development, and vivid descriptions."
+        : "Your writing style should be informative, clear, and well-structured. Focus on facts, logical arguments, and clarity.";
+
+    let prompt = `You are a professional author writing a ${bookType} book about "${topic}". Your task is to write the chapter titled "${chapterTitle}". ${styleInstruction} Make the chapter approximately ${wordCount} words long.`;
+
+    if (previousChapterContent) {
+      const summary = previousChapterContent.length > 1000 ? previousChapterContent.substring(previousChapterContent.length - 1000) : previousChapterContent;
+      prompt += `\n\nYou must continue the story smoothly from the previous chapter. The last part of the previous chapter was:\n\n---\n${summary}\n---\n\nWrite the content for "${chapterTitle}" now, ensuring a natural transition. Do not repeat the title in the chapter content.`;
+    } else {
+      prompt += ` This is the first chapter, so start the book from the beginning. Do not repeat the title in the chapter content.`
+    }
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-pro", // Using pro for better creative writing
+      contents: prompt,
+       config: {
+        temperature: 0.75,
+        topP: 0.95,
+      },
+    });
+    
+    return response.text.trim();
+  } catch (error) {
+    console.error(`Error generating content for chapter "${chapterTitle}":`, error);
+    throw new Error(`Failed to generate content for chapter: ${chapterTitle}`);
+  }
+};
+
+
+export const assembleBook = async (title: string, chapters: Chapter[], bookType: BookType): Promise<string> => {
+    try {
+        const chapterData = chapters.map((c, i) => `## Chapter ${i + 1}: ${c.title}\n\n${c.content}`).join('\n\n---\n\n');
+
+        const prompt = `You are a professional book editor. Your task is to assemble a complete book from the provided materials.
+The book's title is: "${title}". It is a ${bookType} book.
+
+Your output should be a single, cohesive document formatted with Markdown. Follow these steps precisely:
+1.  **Preface:** Write a compelling and interesting preface for the book. It should be about 200-300 words and set the tone for the reader. Use the markdown heading "## Preface".
+2.  **Table of Contents:** Create a "Table of Contents" section. Use the markdown heading "## Table of Contents". List all the chapter titles, formatted nicely (e.g., "Chapter 1: [Title]").
+3.  **Chapters:** Include all the provided chapter content, in order. Ensure each chapter starts with a markdown heading like "## Chapter 1: [Title]".
+
+Here is all the chapter data you need to assemble:
+---
+${chapterData}
+---
+
+Now, generate the complete book content starting from the Preface, following steps 1-3 above. Do NOT include a main title page with a single '#' heading.
+`;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-pro",
+            contents: prompt,
+        });
+
+        const assembledText = response.text.trim();
+        if (!assembledText) {
+             throw new Error("The AI returned an empty response while assembling the book. Please try again.");
+        }
+        return assembledText;
+
+    } catch (error) {
+        console.error("Error assembling book:", error);
+        throw new Error("Failed to assemble the final book. Please try again.");
+    }
+};
+
+export const generateBookCover = async (prompt: string): Promise<string> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: {
+                parts: [{ text: prompt }],
+            },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
+        
+        for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData) {
+                return part.inlineData.data; // This is the base64 string
+            }
+        }
+        throw new Error("Image data not found in response.");
+
+    } catch (error) {
+        console.error("Error generating book cover:", error);
+        throw new Error("Failed to generate the book cover. The model may have refused the prompt. Please try a different description.");
+    }
+};

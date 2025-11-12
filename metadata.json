@@ -1,0 +1,7 @@
+{
+  "name": "Robo AI - Auto Book Generator",
+  "description": "An AI-powered application to automatically generate a complete book from a topic, including a table of contents and chapter-by-chapter content with story continuity.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
