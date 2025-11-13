@@ -13,14 +13,17 @@ export const generateInspiration = async (bookType: BookType, bookCategory: stri
     try {
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: `You are a creative muse for authors. Generate a single, compelling, and unique book idea for a ${bookType} book in the '${bookCategory}' category with a ${tone} tone. Provide a title, subtitle, and a concise (1-2 sentence) description. Provide the output as a single JSON object.`,
+            contents: `You are a creative muse for authors. Your task is to generate a compelling and unique book idea based on specific criteria.
+The book is a ${bookType} book in the '${bookCategory}' category with a ${tone} tone.
+Based on this, generate a title, a subtitle, and a short 1-2 sentence description.
+Provide the output as a single JSON object.`,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
                         title: { type: Type.STRING, description: "The main title of the book." },
-                        subtitle: { type: Type.STRING, description: "A catchy subtitle or tagline for the book." },
+                        subtitle: { type: Type.STRING, description: "A catchy subtitle or tagline." },
                         description: { type: Type.STRING, description: "A 1-2 sentence description of the book's plot or topic." },
                     },
                     required: ['title', 'subtitle', 'description'],
@@ -31,7 +34,7 @@ export const generateInspiration = async (bookType: BookType, bookCategory: stri
         const jsonText = response.text.trim();
         const result = JSON.parse(jsonText);
         
-        if (result && typeof result.title === 'string' && typeof result.subtitle === 'string' && typeof result.description === 'string') {
+        if (result && typeof result.title === 'string' && typeof result.description === 'string') {
             return result as BookInspiration;
         } else {
             throw new Error("Invalid format for book inspiration.");
