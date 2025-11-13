@@ -9,65 +9,11 @@ if (!API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
-export interface BookMetadata {
-    title: string;
-    subtitle: string;
-    author: string;
-    description: string;
-    bookType: BookType;
-    tone: string;
-    numChapters: number;
-}
-
-export const generateRandomBookIdea = async (bookType: BookType, tone: string): Promise<Omit<BookMetadata, 'bookType' | 'tone' | 'numChapters'>> => {
-    try {
-        const prompt = `You are a creative muse. Generate a single, unique, and compelling book idea based on the following genre and tone. The author's name should sound plausible. The description should be a concise and intriguing summary.
-- Type: ${bookType}
-- Tone/Style: ${tone}
-`;
-
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        title: { type: Type.STRING },
-                        subtitle: { type: Type.STRING },
-                        author: { type: Type.STRING },
-                        description: { type: Type.STRING }
-                    },
-                    required: ["title", "subtitle", "author", "description"]
-                }
-            }
-        });
-
-        const jsonText = response.text.trim();
-        const result = JSON.parse(jsonText);
-        return result;
-
-    } catch (error) {
-        console.error("Error generating random book idea:", error);
-        throw new Error("Failed to generate a random book idea. Please try again.");
-    }
-};
-
-export const generateTableOfContents = async (metadata: BookMetadata): Promise<string[]> => {
+export const generateTableOfContents = async (description: string, numChapters: number, bookType: BookType, tone: string): Promise<string[]> => {
   try {
-    const prompt = `You are an expert author's assistant. Generate a table of contents for the following book:
-- Title: "${metadata.title}"
-- Subtitle: "${metadata.subtitle}"
-- Type: ${metadata.bookType}
-- Tone/Style: ${metadata.tone}
-- Description: "${metadata.description}"
-
-The book must have exactly ${metadata.numChapters} chapters. Return the result as a JSON array of strings, where each string is a compelling chapter title. For example: ["The Awakening", "A Shadow Falls"]. Do not include markdown formatting or chapter numbers in the titles.`;
-    
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: prompt,
+      contents: `You are an expert author's assistant. Generate a table of contents for a ${bookType} book based on this description: "${description}". The book's tone should be ${tone}. It must have exactly ${numChapters} chapters. Return the result as a JSON array of strings, where each string is a compelling chapter title. For example: ["The Awakening", "A Shadow Falls"]. Do not include markdown formatting or chapter numbers in the titles.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -94,16 +40,14 @@ The book must have exactly ${metadata.numChapters} chapters. Return the result a
   }
 };
 
-export const generateChapterContent = async (metadata: BookMetadata, chapterTitle: string, wordCount: number, previousChapterContent?: string): Promise<string> => {
+export const generateChapterContent = async (bookTitle: string, description: string, chapterTitle: string, wordCount: number, bookType: BookType, tone: string, previousChapterContent?: string): Promise<string> => {
   try {
-    let prompt = `You are a professional author writing a ${metadata.bookType} book with the following details:
-- Title: "${metadata.title}"
-- Subtitle: "${metadata.subtitle}"
-- Author: "${metadata.author}"
-- Tone/Style: ${metadata.tone}
-- Overall Topic: "${metadata.description}"
+    const styleInstruction = bookType === 'fiction' 
+        ? "Your writing style should be narrative, creative, and engaging. Focus on storytelling, character development, and vivid descriptions."
+        : "Your writing style should be informative, clear, and well-structured. Focus on facts, logical arguments, and clarity.";
 
-Your task is to write the chapter titled "${chapterTitle}". The writing style must be ${metadata.tone}. Make the chapter approximately ${wordCount} words long.`;
+    let prompt = `You are a professional author writing a ${bookType} book titled "${bookTitle}". The book's overall description is "${description}" and the desired tone is ${tone}.
+Your current task is to write the chapter titled "${chapterTitle}". ${styleInstruction} Make the chapter approximately ${wordCount} words long.`;
 
     if (previousChapterContent) {
       const summary = previousChapterContent.length > 1000 ? previousChapterContent.substring(previousChapterContent.length - 1000) : previousChapterContent;
@@ -121,18 +65,7 @@ Your task is to write the chapter titled "${chapterTitle}". The writing style mu
       },
     });
     
-    const content = response.text.trim();
-    
-    // More robust check: ensures the content isn't just whitespace, punctuation, or formatting.
-    const hasActualText = /[a-zA-Z0-9]/.test(content);
-    // New check: ensure the content has a reasonable length. 100 chars is about 20 words.
-    const isLongEnough = content.length > 100;
-
-    if (!content || !hasActualText || !isLongEnough) {
-        throw new Error(`The AI returned an empty or insufficient response (less than ~20 words) for chapter "${chapterTitle}". Please try regenerating it.`);
-    }
-
-    return content;
+    return response.text.trim();
   } catch (error) {
     console.error(`Error generating content for chapter "${chapterTitle}":`, error);
     throw new Error(`Failed to generate content for chapter: ${chapterTitle}`);
@@ -140,63 +73,57 @@ Your task is to write the chapter titled "${chapterTitle}". The writing style mu
 };
 
 
-export const assembleBook = async (metadata: BookMetadata, chapters: Chapter[]): Promise<string> => {
+export const assembleBook = async (title: string, subtitle: string, author: string, chapters: Chapter[], bookType: BookType, tone: string): Promise<string> => {
     try {
-        const chapterTitles = chapters.map((c, i) => `${i + 1}. ${c.title}`).join('\n');
+        const chapterData = chapters.map((c, i) => `## Chapter ${i + 1}: ${c.title}\n\n${c.content}`).join('\n\n---\n\n');
 
-        const prompt = `You are a professional book editor. Your task is to write a preface and create a table of contents for a book.
+        const prompt = `You are a professional book editor. Your task is to assemble a complete book from the provided materials.
+The book's title is: "${title}".
+The book's subtitle is: "${subtitle}".
+The author is: ${author}.
+It is a ${bookType} book with a ${tone} tone.
 
-Book Details:
-- Title: "${metadata.title}"
-- Subtitle: "${metadata.subtitle}"
-- Author: "${metadata.author}"
-- Type: ${metadata.bookType}
-- Tone/Style: ${metadata.tone}
-- Overall Topic: "${metadata.description}"
+Your output should be a single, cohesive document formatted with Markdown. Follow these steps precisely:
+1.  **Preface:** Write a compelling and interesting preface for the book. It should be about 200-300 words and set the tone for the reader. Use the markdown heading "## Preface".
+2.  **Table of Contents:** Create a "Table of Contents" section. Use the markdown heading "## Table of Contents". List all the chapter titles, formatted nicely (e.g., "Chapter 1: [Title]").
+3.  **Chapters:** Include all the provided chapter content, in order. Ensure each chapter starts with a markdown heading like "## Chapter 1: [Title]".
 
-Chapter List:
-${chapterTitles}
+Here is all the chapter data you need to assemble:
+---
+${chapterData}
+---
 
-Your output must be a single document formatted with Markdown. Follow these steps precisely:
-1.  **Preface:** Write a compelling preface for the book (200-300 words) that sets the tone. Use the markdown heading "## Preface".
-2.  **Table of Contents:** After the preface, create a "Table of Contents" section. Use the markdown heading "## Table of Contents". List all the chapter titles provided above.
-
-Do NOT include any other content. Do not write the chapters themselves.`;
+Now, generate the complete book content starting from the Preface, following steps 1-3 above. Do NOT include a main title page with the title/author/subtitle (a single '#' heading); that information will be handled separately.
+`;
 
         const response = await ai.models.generateContent({
             model: "gemini-2.5-pro",
             contents: prompt,
         });
 
-        const prefaceAndToc = response.text.trim();
-        if (!prefaceAndToc || !prefaceAndToc.toLowerCase().includes('preface') || !prefaceAndToc.toLowerCase().includes('table of contents')) {
-             throw new Error("The AI failed to generate the preface and table of contents. Please try again.");
+        const assembledText = response.text.trim();
+        if (!assembledText) {
+             throw new Error("The AI returned an empty response while assembling the book. Please try again.");
         }
-
-        const chapterData = chapters.map((c, i) => `## Chapter ${i + 1}: ${c.title}\n\n${c.content}`).join('\n\n---\n\n');
-
-        // Assemble the book on the client-side for 100% reliability
-        const fullBookContent = `${prefaceAndToc}\n\n---\n\n${chapterData}`;
-        
-        return fullBookContent;
+        return assembledText;
 
     } catch (error) {
         console.error("Error assembling book:", error);
-        throw new Error(error instanceof Error ? error.message : "Failed to assemble the final book. Please try again.");
+        throw new Error("Failed to assemble the final book. Please try again.");
     }
 };
 
-export const generateBookCover = async (prompt: string, title: string, author: string, addAuthorToCover: boolean): Promise<string> => {
+export const generateBookCover = async (title: string, subtitle: string, author: string | null, prompt: string): Promise<string> => {
     try {
-        const fullPrompt = `A cinematic, high-quality book cover.
-- Visual Description: "${prompt}"
-- Book Title: "${title}"
-- Author: ${addAuthorToCover && author ? `"${author}"` : 'Do not include any author name.'}
+        let fullPrompt = `Book cover for a book titled "${title}".`;
+        if (subtitle) {
+            fullPrompt += ` Subtitle: "${subtitle}".`;
+        }
+        if (author) {
+            fullPrompt += ` By author ${author}.`;
+        }
+        fullPrompt += ` The cover should visually represent this description: "${prompt}". The style should be cinematic and high-quality. If the prompt includes text, a book title, or author name, ensure all text is clearly legible and has significant padding from all edges of the image; the text should not be cut off.`;
 
-Important rules:
-- All text (title and author name, if included) must be clearly legible and well-integrated into the design.
-- Ensure all text has significant padding from all edges of the image; text should not be cut off.`;
-        
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: {
