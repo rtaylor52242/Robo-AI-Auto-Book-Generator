@@ -16,3 +16,9 @@ export interface BookHistoryEntry {
     frontCoverImage?: string;
     backCoverImage?: string;
 }
+
+export interface BookInspiration {
+    title: string;
+    subtitle: string;
+    description: string;
+}

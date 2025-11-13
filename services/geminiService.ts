@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import type { Chapter, BookType } from "../types";
+import type { Chapter, BookType, BookInspiration } from "../types";
 
 const API_KEY = process.env.API_KEY;
 
@@ -9,11 +9,45 @@ if (!API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
-export const generateTableOfContents = async (description: string, numChapters: number, bookType: BookType, tone: string): Promise<string[]> => {
+export const generateInspiration = async (bookType: BookType, bookCategory: string, tone: string): Promise<BookInspiration> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: `You are a creative muse for authors. Generate a single, compelling, and unique book idea for a ${bookType} book in the '${bookCategory}' category with a ${tone} tone. Provide a title, subtitle, and a concise (1-2 sentence) description. Provide the output as a single JSON object.`,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING, description: "The main title of the book." },
+                        subtitle: { type: Type.STRING, description: "A catchy subtitle or tagline for the book." },
+                        description: { type: Type.STRING, description: "A 1-2 sentence description of the book's plot or topic." },
+                    },
+                    required: ['title', 'subtitle', 'description'],
+                },
+            },
+        });
+
+        const jsonText = response.text.trim();
+        const result = JSON.parse(jsonText);
+        
+        if (result && typeof result.title === 'string' && typeof result.subtitle === 'string' && typeof result.description === 'string') {
+            return result as BookInspiration;
+        } else {
+            throw new Error("Invalid format for book inspiration.");
+        }
+
+    } catch (error) {
+        console.error("Error generating inspiration:", error);
+        throw new Error("Failed to generate an idea. Please try again.");
+    }
+};
+
+export const generateTableOfContents = async (description: string, numChapters: number, bookType: BookType, bookCategory: string, tone: string): Promise<string[]> => {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: `You are an expert author's assistant. Generate a table of contents for a ${bookType} book based on this description: "${description}". The book's tone should be ${tone}. It must have exactly ${numChapters} chapters. Return the result as a JSON array of strings, where each string is a compelling chapter title. For example: ["The Awakening", "A Shadow Falls"]. Do not include markdown formatting or chapter numbers in the titles.`,
+      contents: `You are an expert author's assistant. Generate a table of contents for a ${bookType} book in the '${bookCategory}' category, based on this description: "${description}". The book's tone should be ${tone}. It must have exactly ${numChapters} chapters. Return the result as a JSON array of strings, where each string is a compelling chapter title. For example: ["The Awakening", "A Shadow Falls"]. Do not include markdown formatting or chapter numbers in the titles.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -40,13 +74,13 @@ export const generateTableOfContents = async (description: string, numChapters: 
   }
 };
 
-export const generateChapterContent = async (bookTitle: string, description: string, chapterTitle: string, wordCount: number, bookType: BookType, tone: string, previousChapterContent?: string): Promise<string> => {
+export const generateChapterContent = async (bookTitle: string, description: string, chapterTitle: string, wordCount: number, bookType: BookType, bookCategory: string, tone: string, previousChapterContent?: string): Promise<string> => {
   try {
     const styleInstruction = bookType === 'fiction' 
         ? "Your writing style should be narrative, creative, and engaging. Focus on storytelling, character development, and vivid descriptions."
         : "Your writing style should be informative, clear, and well-structured. Focus on facts, logical arguments, and clarity.";
 
-    let prompt = `You are a professional author writing a ${bookType} book titled "${bookTitle}". The book's overall description is "${description}" and the desired tone is ${tone}.
+    let prompt = `You are a professional author writing a ${bookType} book in the '${bookCategory}' category, titled "${bookTitle}". The book's overall description is "${description}" and the desired tone is ${tone}.
 Your current task is to write the chapter titled "${chapterTitle}". ${styleInstruction} Make the chapter approximately ${wordCount} words long.`;
 
     if (previousChapterContent) {
@@ -73,7 +107,7 @@ Your current task is to write the chapter titled "${chapterTitle}". ${styleInstr
 };
 
 
-export const assembleBook = async (title: string, subtitle: string, author: string, chapters: Chapter[], bookType: BookType, tone: string): Promise<string> => {
+export const assembleBook = async (title: string, subtitle: string, author: string, chapters: Chapter[], bookType: BookType, bookCategory: string, tone: string): Promise<string> => {
     try {
         const chapterData = chapters.map((c, i) => `## Chapter ${i + 1}: ${c.title}\n\n${c.content}`).join('\n\n---\n\n');
 
@@ -81,7 +115,7 @@ export const assembleBook = async (title: string, subtitle: string, author: stri
 The book's title is: "${title}".
 The book's subtitle is: "${subtitle}".
 The author is: ${author}.
-It is a ${bookType} book with a ${tone} tone.
+It is a ${bookType} book in the '${bookCategory}' category with a ${tone} tone.
 
 Your output should be a single, cohesive document formatted with Markdown. Follow these steps precisely:
 1.  **Preface:** Write a compelling and interesting preface for the book. It should be about 200-300 words and set the tone for the reader. Use the markdown heading "## Preface".
@@ -113,9 +147,9 @@ Now, generate the complete book content starting from the Preface, following ste
     }
 };
 
-export const generateBookCover = async (title: string, subtitle: string, author: string | null, prompt: string): Promise<string> => {
+export const generateBookCover = async (title: string, subtitle: string, author: string | null, bookCategory: string, prompt: string): Promise<string> => {
     try {
-        let fullPrompt = `Book cover for a book titled "${title}".`;
+        let fullPrompt = `Book cover for a book titled "${title}" in the genre/category of '${bookCategory}'.`;
         if (subtitle) {
             fullPrompt += ` Subtitle: "${subtitle}".`;
         }

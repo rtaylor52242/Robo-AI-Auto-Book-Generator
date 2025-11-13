@@ -1,10 +1,32 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { generateTableOfContents, generateChapterContent, assembleBook, generateBookCover } from './services/geminiService';
-import type { Chapter, BookType, BookHistoryEntry } from './types';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { generateTableOfContents, generateChapterContent, assembleBook, generateBookCover, generateInspiration } from './services/geminiService';
+import type { Chapter, BookType, BookHistoryEntry, BookInspiration } from './types';
 import { LoadingSpinner, BookIcon, WandIcon, RefreshIcon, TrashIcon, HistoryIcon, MicrophoneIcon, PlusIcon, ChevronLeftIcon } from './components/icons';
 import StorybookViewer from './components/StorybookViewer';
 
 type AppStep = 'CONFIG' | 'COVERS' | 'WRITING';
+
+const BOOK_CATEGORIES = {
+    'Fiction Categories': [
+        'Romance',
+        'Mystery & Thriller',
+        'Science Fiction & Fantasy',
+        'Literary Fiction',
+    ],
+    'Non-Fiction Categories': [
+        'Self-Help & Personal Development',
+        'Business & Money',
+        'Health, Fitness & Dieting',
+        'Biographies & Memoirs',
+        'Cookbooks',
+        'Parenting & Relationships',
+        'True Crime',
+        'History',
+        'Religion & Spirituality',
+        'Education & Test Prep',
+    ]
+};
+const ALL_CATEGORIES = Object.values(BOOK_CATEGORIES).flat();
 
 const App: React.FC = () => {
   const [appStep, setAppStep] = useState<AppStep>('CONFIG');
@@ -18,6 +40,7 @@ const App: React.FC = () => {
   const [numChapters, setNumChapters] = useState<number | string>(5);
   const [wordCount, setWordCount] = useState<number | string>(500);
   const [bookType, setBookType] = useState<BookType>('fiction');
+  const [bookCategory, setBookCategory] = useState('Romance');
   const [tone, setTone] = useState('Dramatic');
 
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -41,9 +64,11 @@ const App: React.FC = () => {
   const [isGeneratingFrontCover, setIsGeneratingFrontCover] = useState(false);
   const [isGeneratingBackCover, setIsGeneratingBackCover] = useState(false);
   const [isGeneratingBothCovers, setIsGeneratingBothCovers] = useState(false);
+  const [isInspiring, setIsInspiring] = useState(false);
   
   // Voice Input State
   const [isDictating, setIsDictating] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     try {
@@ -58,6 +83,7 @@ const App: React.FC = () => {
         setNumChapters(data.numChapters || 5);
         setWordCount(data.wordCount || 500);
         setBookType(data.bookType || 'fiction');
+        setBookCategory(data.bookCategory || 'Romance');
         setTone(data.tone || 'Dramatic');
         setChapters(data.chapters || []);
         setAppStep(data.appStep || (data.chapters && data.chapters.length > 0 ? 'WRITING' : 'CONFIG'));
@@ -80,12 +106,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (appStep !== 'CONFIG' || title || description || chapters.length > 0) {
       const bookData = JSON.stringify({
-        appStep, title, subtitle, author, includeAuthorOnCover, description, numChapters, wordCount, bookType, tone, chapters,
+        appStep, title, subtitle, author, includeAuthorOnCover, description, numChapters, wordCount, bookType, bookCategory, tone, chapters,
         frontCoverImage, backCoverImage, frontCoverPrompt, backCoverPrompt
       });
       localStorage.setItem('robo-ai-book-progress', bookData);
     }
-  }, [appStep, title, subtitle, author, includeAuthorOnCover, description, numChapters, wordCount, bookType, tone, chapters, frontCoverImage, backCoverImage, frontCoverPrompt, backCoverPrompt]);
+  }, [appStep, title, subtitle, author, includeAuthorOnCover, description, numChapters, wordCount, bookType, bookCategory, tone, chapters, frontCoverImage, backCoverImage, frontCoverPrompt, backCoverPrompt]);
   
   useEffect(() => {
     localStorage.setItem('robo-ai-book-history', JSON.stringify(bookHistory));
@@ -102,6 +128,7 @@ const App: React.FC = () => {
       setNumChapters(5);
       setWordCount(500);
       setBookType('fiction');
+      setBookCategory('Romance');
       setTone('Dramatic');
       setChapters([]);
       setError(null);
@@ -128,10 +155,10 @@ const App: React.FC = () => {
     setError(null);
     setChapters([]);
     try {
-      const titles = await generateTableOfContents(description, +numChapters, bookType, tone);
+      const titles = await generateTableOfContents(description, +numChapters, bookType, bookCategory, tone);
       setChapters(titles.map(title => ({ title, content: '', status: 'pending' })));
-      setFrontCoverPrompt(`A book cover for a ${bookType} book titled "${title}". Style: ${tone}. Theme: ${description}.`);
-      setBackCoverPrompt(`The back cover for the book titled "${title}", showing a complementary and mysterious scene or theme.`);
+      setFrontCoverPrompt(`A book cover for a ${bookType} book in the ${bookCategory} category, titled "${title}". Style: ${tone}. Theme: ${description}.`);
+      setBackCoverPrompt(`The back cover for the book titled "${title}", showing a complementary and mysterious scene or theme related to the ${bookCategory} genre.`);
       setAppStep('COVERS');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'An unknown error occurred.');
@@ -153,7 +180,7 @@ const App: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-          const imageData = await generateBookCover(title, subtitle, includeAuthorOnCover ? author : null, prompt);
+          const imageData = await generateBookCover(title, subtitle, includeAuthorOnCover ? author : null, bookCategory, prompt);
           setImage(imageData);
       } catch (e) {
           setError(e instanceof Error ? e.message : `Failed to generate ${type} cover.`);
@@ -182,23 +209,52 @@ const App: React.FC = () => {
     }
   };
   
-  const startDictation = () => {
+  const toggleDictation = () => {
+    if (isDictating) {
+      recognitionRef.current?.stop();
+      // onend will fire and set state
+      return;
+    }
+
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       setError("Speech recognition is not supported in this browser.");
       return;
     }
-    const recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.lang = 'en-US';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
 
-    setIsDictating(true);
-    recognition.onresult = (event: any) => setDescription(event.results[0][0].transcript);
-    recognition.onerror = (event: any) => setError(`Speech recognition error: ${event.error}`);
-    recognition.onend = () => setIsDictating(false);
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.continuous = true;
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+
+    recognition.onresult = (event: any) => {
+        let final_transcript = description;
+        let interim_transcript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+                final_transcript += event.results[i][0].transcript + '. ';
+            } else {
+                interim_transcript += event.results[i][0].transcript;
+            }
+        }
+        setDescription(final_transcript);
+    };
+
+    recognition.onerror = (event: any) => {
+      setError(`Speech recognition error: ${event.error}`);
+      setIsDictating(false);
+      recognitionRef.current = null;
+    };
+
+    recognition.onend = () => {
+      setIsDictating(false);
+      recognitionRef.current = null;
+    };
+
     recognition.start();
+    setIsDictating(true);
   };
 
   const handleChapterContentChange = (index: number, newContent: string) => setChapters(prev => prev.map((ch, i) => i === index ? { ...ch, content: newContent } : ch));
@@ -226,13 +282,13 @@ const App: React.FC = () => {
     }
     
     try {
-        const content = await generateChapterContent(title, description, chapters[chapterIndex].title, +wordCount, bookType, tone, previousChapterContent);
+        const content = await generateChapterContent(title, description, chapters[chapterIndex].title, +wordCount, bookType, bookCategory, tone, previousChapterContent);
         setChapters(prev => prev.map((ch, i) => i === chapterIndex ? { ...ch, status: 'done', content } : ch));
     } catch (e) {
         setError(`Failed to generate chapter ${chapterIndex + 1}.`);
         setChapters(prev => prev.map((ch, i) => i === chapterIndex ? { ...ch, status: 'pending' } : ch));
     }
-  }, [chapters, title, description, continueFromPrevious, wordCount, bookType, tone]);
+  }, [chapters, title, description, continueFromPrevious, wordCount, bookType, bookCategory, tone]);
 
   const handleGenerateAllChapters = async () => {
     setIsLoading(true);
@@ -248,7 +304,7 @@ const App: React.FC = () => {
         setLoadingMessage(`Generating Chapter ${i + 1}/${currentChapters.length}: ${currentChapters[i].title}`);
         setChapters(prev => prev.map((ch, idx) => idx === i ? { ...ch, status: 'generating' } : ch));
         try {
-            const content = await generateChapterContent(title, description, currentChapters[i].title, +wordCount, bookType, tone, lastContent);
+            const content = await generateChapterContent(title, description, currentChapters[i].title, +wordCount, bookType, bookCategory, tone, lastContent);
             lastContent = continueFromPrevious ? content : '';
             currentChapters = currentChapters.map((ch, idx) => idx === i ? { ...ch, status: 'done', content } : ch);
             setChapters(currentChapters);
@@ -267,7 +323,7 @@ const App: React.FC = () => {
     setLoadingMessage('Assembling your final book...');
     setError(null);
     try {
-        const fullBook = await assembleBook(title, subtitle, author, chapters, bookType, tone);
+        const fullBook = await assembleBook(title, subtitle, author, chapters, bookType, bookCategory, tone);
         const newHistoryEntry: BookHistoryEntry = {
             id: Date.now().toString(),
             title, subtitle, author,
@@ -299,11 +355,76 @@ const App: React.FC = () => {
 
   const isBookReady = chapters.length > 0 && chapters.every(c => c.status === 'done' && c.content);
 
-  const TONES = ['Dramatic', 'Humorous', 'Formal', 'Casual', 'Mysterious', 'Academic', 'Poetic', 'Suspenseful'];
+  const TONES = [
+    'Academic',
+    'Adventurous',
+    'Allegorical',
+    'Casual',
+    'Cautionary',
+    'Comedic',
+    'Didactic',
+    'Dramatic',
+    'Elegaic',
+    'Epic',
+    'Fantastical',
+    'Formal',
+    'Horrific',
+    'Humorous',
+    'Inspirational',
+    'Ironic',
+    'Journalistic',
+    'Lighthearted',
+    'Lyrical',
+    'Melodramatic',
+    'Mysterious',
+    'Nostalgic',
+    'Objective',
+    'Paranoid',
+    'Poetic',
+
+    'Romantic',
+    'Satirical',
+    'Subjective',
+    'Suspenseful',
+    'Whimsical'
+  ].sort();
+
+  const handleInspireMe = async () => {
+    setIsInspiring(true);
+    setError(null);
+    try {
+        const inspiration: BookInspiration = await generateInspiration(bookType, bookCategory, tone);
+        setTitle(inspiration.title);
+        setSubtitle(inspiration.subtitle);
+        setDescription(inspiration.description);
+    } catch (e) {
+        setError(e instanceof Error ? e.message : 'An unknown error occurred while getting inspiration.');
+    } finally {
+        setIsInspiring(false);
+    }
+  };
+
+  const handleBookTypeChange = (newType: BookType) => {
+      setBookType(newType);
+      const newCategory = newType === 'fiction'
+          ? BOOK_CATEGORIES['Fiction Categories'][0]
+          : BOOK_CATEGORIES['Non-Fiction Categories'][0];
+      setBookCategory(newCategory);
+  };
 
   const renderConfigScreen = () => (
     <div className="bg-white/5 p-6 sm:p-8 rounded-2xl shadow-2xl backdrop-blur-sm border border-white/10">
-      <h2 className="text-2xl font-bold text-indigo-300 mb-6 text-center">Book Settings</h2>
+      <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+        <h2 className="text-2xl font-bold text-indigo-300 text-center sm:text-left">Book Settings</h2>
+        <button
+            onClick={handleInspireMe}
+            disabled={isInspiring || isLoading}
+            className="flex items-center justify-center w-full sm:w-auto gap-2 text-sm font-semibold bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800/50 text-white px-4 py-2 rounded-lg transition-transform transform hover:scale-105 disabled:transform-none disabled:cursor-not-allowed"
+        >
+            {isInspiring ? <LoadingSpinner className="w-4 h-4" /> : <WandIcon className="w-4 h-4"/>}
+            Inspire Me
+        </button>
+      </div>
       <div className="space-y-4">
          <div className="grid md:grid-cols-2 gap-4">
             <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Book Title" className="w-full bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 outline-none transition" />
@@ -325,7 +446,7 @@ const App: React.FC = () => {
               className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-lg pl-4 pr-12 py-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
               disabled={isLoading}
             />
-            <button onClick={startDictation} disabled={isDictating} title="Dictate description" className="absolute right-2 top-4 p-2 text-gray-400 hover:text-white transition rounded-full hover:bg-white/10">
+            <button onClick={toggleDictation} title={isDictating ? "Stop Dictation" : "Start Dictation"} className="absolute right-2 top-4 p-2 text-gray-400 hover:text-white transition rounded-full hover:bg-white/10">
                 <MicrophoneIcon isListening={isDictating} className="w-5 h-5"/>
             </button>
           </div>
@@ -333,9 +454,19 @@ const App: React.FC = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Book Type</label>
-                <select value={bookType} onChange={e => setBookType(e.target.value as BookType)} className="w-full bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 outline-none transition">
+                <select value={bookType} onChange={e => handleBookTypeChange(e.target.value as BookType)} className="w-full bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 outline-none transition">
                     <option value="fiction">Fiction</option>
                     <option value="non-fiction">Non-Fiction</option>
+                </select>
+            </div>
+            <div className="col-span-2">
+                 <label className="block text-sm font-medium text-gray-300 mb-2">Category</label>
+                <select value={bookCategory} onChange={e => setBookCategory(e.target.value)} className="w-full bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 outline-none transition">
+                    {Object.entries(BOOK_CATEGORIES).map(([groupLabel, categories]) => (
+                        <optgroup key={groupLabel} label={groupLabel}>
+                            {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                        </optgroup>
+                    ))}
                 </select>
             </div>
             <div>
@@ -344,11 +475,11 @@ const App: React.FC = () => {
                     {TONES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
             </div>
-            <div>
+            <div className="col-span-1 md:col-span-2">
               <label htmlFor="chapters" className="block text-sm font-medium text-gray-300 mb-2">Chapters</label>
               <input type="number" id="chapters" value={numChapters} onChange={(e) => setNumChapters(e.target.value ? parseInt(e.target.value) : '')} min="1" max="20" className="w-full bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 outline-none transition" disabled={isLoading}/>
             </div>
-            <div>
+            <div className="col-span-1 md:col-span-2">
               <label htmlFor="wordcount" className="block text-sm font-medium text-gray-300 mb-2">Words/Chap</label>
               <input type="number" id="wordcount" value={wordCount} onChange={(e) => setWordCount(e.target.value ? parseInt(e.target.value) : '')} min="100" step="50" className="w-full bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 outline-none transition" disabled={isLoading}/>
             </div>
