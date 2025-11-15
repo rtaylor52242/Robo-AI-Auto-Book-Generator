@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { generateTableOfContents, generateChapterContent, assembleBook, generateBookCover, generateInspiration } from './services/geminiService';
 import type { Chapter, BookType, BookHistoryEntry, BookInspiration } from './types';
-import { LoadingSpinner, BookIcon, WandIcon, RefreshIcon, TrashIcon, HistoryIcon, MicrophoneIcon, PlusIcon, ChevronLeftIcon } from './components/icons';
+import { LoadingSpinner, BookIcon, WandIcon, RefreshIcon, TrashIcon, HistoryIcon, MicrophoneIcon, PlusIcon, ChevronLeftIcon, QuestionMarkCircleIcon } from './components/icons';
 import StorybookViewer from './components/StorybookViewer';
+import HelpModal from './components/HelpModal';
 
 type AppStep = 'CONFIG' | 'COVERS' | 'WRITING';
 
@@ -55,6 +56,7 @@ const App: React.FC = () => {
   const [expandedChapters, setExpandedChapters] = useState<Set<number>>(new Set());
   const [bookHistory, setBookHistory] = useState<BookHistoryEntry[]>([]);
   const [isHistoryVisible, setIsHistoryVisible] = useState(true);
+  const [isHelpVisible, setIsHelpVisible] = useState(false);
 
   // Covers State
   const [frontCoverPrompt, setFrontCoverPrompt] = useState('');
@@ -142,6 +144,43 @@ const App: React.FC = () => {
       setFrontCoverPrompt('');
       setBackCoverPrompt('');
       localStorage.removeItem('robo-ai-book-progress');
+    }
+  };
+
+  const handleClearAllData = () => {
+    if (window.confirm("Are you sure you want to clear all app data? This will permanently delete your current progress and all saved book history. This action cannot be undone.")) {
+      // Clear storage
+      localStorage.removeItem('robo-ai-book-progress');
+      localStorage.removeItem('robo-ai-book-history');
+      
+      // Reset all state to initial values
+      setAppStep('CONFIG');
+      setTitle('');
+      setSubtitle('');
+      setAuthor('');
+      setIncludeAuthorOnCover(true);
+      setDescription('');
+      setNumChapters(5);
+      setWordCount(500);
+      setBookType('fiction');
+      setBookCategory('Romance');
+      setTone('Dramatic');
+      setChapters([]);
+      setError(null);
+      setIsLoading(false);
+      setLoadingMessage('');
+      setFinalBookContent('');
+      setCurrentBook({});
+      setExpandedChapters(new Set());
+      setFrontCoverImage(null);
+      setBackCoverImage(null);
+      setFrontCoverPrompt('');
+      setBackCoverPrompt('');
+      setBookHistory([]);
+      setShowBookViewer(false);
+
+      // No need to reload, the state update will re-render the component in its initial state.
+      // This provides immediate feedback to the user.
     }
   };
 
@@ -622,10 +661,28 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-900 text-white bg-gradient-to-br from-[#111827] to-[#1e1b4b] p-4 sm:p-8">
       {showBookViewer && currentBook.title && currentBook.assembledContent && <StorybookViewer title={currentBook.title} subtitle={currentBook.subtitle} author={currentBook.author} content={currentBook.assembledContent} onClose={() => setShowBookViewer(false)} frontCoverUrl={currentBook.frontCoverImage} backCoverUrl={currentBook.backCoverImage} />}
+      {isHelpVisible && <HelpModal onClose={() => setIsHelpVisible(false)} />}
       <div className="max-w-4xl mx-auto">
-        <header className="text-center mb-10">
+        <header className="relative text-center mb-10">
           <h1 className="text-4xl sm:text-5xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-indigo-500">Robo AI</h1>
           <p className="text-xl font-light text-gray-300">Auto Book Generator</p>
+          <div className="absolute top-0 right-0 flex items-center gap-2">
+            <button 
+              onClick={() => setIsHelpVisible(true)}
+              title="Help"
+              className="p-2 bg-blue-800/50 hover:bg-blue-700 text-blue-200 rounded-full transition-colors"
+            >
+              <QuestionMarkCircleIcon className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={handleClearAllData} 
+              title="Clear all app data from browser"
+              className="flex items-center gap-2 text-sm bg-red-800/50 hover:bg-red-700 text-red-200 font-semibold px-3 py-2 rounded-lg transition-colors"
+            >
+              <TrashIcon className="w-4 h-4" />
+              Clear Memory
+            </button>
+          </div>
         </header>
         
         {renderCurrentStep()}

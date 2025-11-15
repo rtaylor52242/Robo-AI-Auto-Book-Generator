@@ -28,33 +28,35 @@ const StorybookViewer: React.FC<StorybookViewerProps> = ({ title, subtitle, auth
     const generatedPages: string[] = [];
 
     if (content) {
+        // Split content into major sections based on H2 markdown
         const sections = content.split(/(?=^## )/m).filter(s => s.trim());
-        if (sections.length > 0) {
-            const preface = sections.shift();
-            if (preface) generatedPages.push(preface);
-        }
-        if (sections.length > 0) {
-            const toc = sections.shift();
-            if (toc) generatedPages.push(toc);
-        }
-        sections.forEach(chapterContent => {
-            if (!chapterContent) return;
+        
+        sections.forEach(sectionContent => {
+            if (!sectionContent) return;
+
+            // Paginate each section to respect page size
             let currentPos = 0;
-            while (currentPos < chapterContent.length) {
+            while (currentPos < sectionContent.length) {
                 let endPos = currentPos + CHARS_PER_PAGE;
-                if (endPos < chapterContent.length) {
-                    let lastSpace = chapterContent.lastIndexOf(' ', endPos);
-                    let lastNewline = chapterContent.lastIndexOf('\n', endPos);
-                    endPos = Math.max(lastSpace, lastNewline) > currentPos ? Math.max(lastSpace, lastNewline) : endPos;
+                if (endPos < sectionContent.length) {
+                    // Try to find a natural break point (space or newline) to avoid cutting words
+                    const lastSpace = sectionContent.lastIndexOf(' ', endPos);
+                    const lastNewline = sectionContent.lastIndexOf('\n', endPos);
+                    const breakPoint = Math.max(lastSpace, lastNewline);
+                    
+                    if (breakPoint > currentPos) {
+                        endPos = breakPoint + 1; // Include the space/newline in the previous page
+                    }
                 }
-                generatedPages.push(chapterContent.substring(currentPos, endPos));
+                generatedPages.push(sectionContent.substring(currentPos, endPos));
                 currentPos = endPos;
             }
         });
     }
 
+    // If, after all processing, there are no pages, show a fallback message
     if (generatedPages.length === 0) {
-        generatedPages.push('This book is empty.');
+        generatedPages.push('## Book Generation Failed\n\nThere was an issue generating the book content. Please close this view and try assembling it again.');
     }
 
     const allPages = [...generatedPages];
@@ -170,14 +172,9 @@ const StorybookViewer: React.FC<StorybookViewerProps> = ({ title, subtitle, auth
       return <div className="flex items-center justify-center h-full"><img src={`data:image/png;base64,${imageUrl}`} alt="Book Cover" className="w-full h-full object-contain" /></div>;
     }
     
-    return pageContent.split('\n').map((paragraph, index) => {
-      paragraph = paragraph.trim();
-      if (paragraph.startsWith('## ')) {
-        return <h2 key={index} className="text-3xl font-bold font-serif mb-4 mt-6 text-[#5C4033]">{paragraph.substring(3)}</h2>;
-      }
-      if (paragraph === '') return null;
-      return <p key={index} className="mb-4 indent-8">{paragraph}</p>;
-    });
+    // Use `marked` to safely parse and render the markdown content.
+    // The parent div has the 'prose' class from Tailwind which will style the output.
+    return <div dangerouslySetInnerHTML={{ __html: marked.parse(pageContent) as string }} />;
   };
 
   return (
@@ -191,7 +188,7 @@ const StorybookViewer: React.FC<StorybookViewerProps> = ({ title, subtitle, auth
         </div>
         <div className="flex-grow overflow-hidden relative mt-2 bg-white/30 rounded">
             <div key={currentPage} className="prose max-w-none h-full text-lg leading-relaxed animate-[fade-in_0.5s_ease-out] overflow-y-auto p-4">
-                {renderPageContent(pages[currentPage])}
+                {renderPageContent(pages[currentPage] || '')}
             </div>
         </div>
         <div className="flex justify-between items-center mt-4 pt-4 border-t border-[#3A2D23]/20 font-sans">
